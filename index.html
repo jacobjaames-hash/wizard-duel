@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>巫師對決</title>
+<style>
+  html,body{margin:0;height:100%;background:#05080f;overflow:hidden;font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;color:#f3ead2;-webkit-user-select:none;user-select:none;touch-action:none}
+  #gl,#hud{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #hud{pointer-events:none}
+  #cam{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+  #start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:radial-gradient(ellipse at center,#16233c 0%,#05080f 75%);text-align:center;padding:20px;box-sizing:border-box}
+  #start h1{margin:0;font-size:clamp(28px,6vw,56px);letter-spacing:.15em;color:#e9c46a;text-shadow:0 0 24px #e9c46a66}
+  #start p{margin:0;max-width:34em;line-height:1.7;font-size:clamp(13px,2.2vw,18px);color:#cdd6e6}
+  #start .row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  button{font:inherit;font-size:clamp(16px,3vw,22px);padding:.7em 1.6em;border-radius:999px;border:2px solid #e9c46a;background:#1b2a47;color:#f7e7b4;cursor:pointer}
+  button:active{background:#e9c46a;color:#1b2a47}
+  #msg{min-height:1.5em;color:#ffb4a2}
+  .hc{font-size:clamp(12px,2vw,16px);color:#cdd6e6;align-items:center}
+  select{font:inherit;padding:.2em .4em;border-radius:6px;background:#1b2a47;color:#f7e7b4;border:1px solid #e9c46a}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="hud"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+<div id="start">
+  <h1>巫師對決</h1>
+  <p>試玩版：打狼人、雙人 PK</p>
+  <p>把手機架在電視前，鏡頭對著自己，站在 2–3 公尺外，上半身和舉高的手都要入鏡。<br>
+  <b>揮杖</b>＝放閃電　<b>舉過頭</b>＝回復魔力　<b>光圈縮到最小時揮杖</b>＝反彈<br>
+  <b>連續畫圓圈</b>＝防護罩（20 魔力）　<b>快速左右連揮</b>＝絆倒對手（30 魔力）　<b>停住 1 秒再揮</b>＝強力閃電（25 魔力）</p>
+  <div class="row">
+    <button data-n="1">一人打狼人</button>
+    <button data-n="2">兩人打狼人</button>
+    <button data-n="2" data-k="pk">兩人 PK</button>
+  </div>
+  <div class="row hc">PK 讓分：
+    <label>玩家一 血量 <select id="hp0"><option>100</option><option>150</option><option>200</option></select></label>
+    <label>回魔 <select id="rg0"><option value="25">正常</option><option value="40">加快</option></select></label>
+    <label>玩家二 血量 <select id="hp1"><option>100</option><option>150</option><option>200</option></select></label>
+    <label>回魔 <select id="rg1"><option value="25">正常</option><option value="40">加快</option></select></label>
+  </div>
+  <p id="msg"></p>
+  <p style="font-size:12px;opacity:.6">沒有鏡頭時：滑鼠移動瞄準、點一下揮杖、按住空白鍵回魔；S 防護罩、T 絆倒、P 強力（PK 的玩家二：Enter 揮杖、方向鍵上回魔、K 防護罩、L 絆倒）</p>
+  <p style="font-size:11px;opacity:.5">狼人模型：「Werewolf」by TopoForge，以 Sloyd 生成，CC BY 4.0 授權。環境光與霧氣貼圖：pmndrs/assets，CC0</p>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
