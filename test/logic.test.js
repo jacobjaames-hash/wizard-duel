@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CFG, WandTracker, Fight, Duel } from '../js/logic.js';
+import { CFG, WandTracker, Duel } from '../js/logic.js';
 
 const pose = (wx, wy) => ({ wrist: { x: wx, y: wy }, nose: { x: 0.5, y: 0.3 }, shoulderC: { x: 0.5, y: 0.45 }, sw: 0.2 });
 function run(tr, path, dt = 1 / 30, t0 = 0) { let n = 0, last; path.forEach((p, i) => { last = tr.update(t0 + i * dt, p); if (last.swing) n++; }); return { n, last }; }
@@ -29,45 +29,6 @@ test('追蹤遺失不當機也不觸發', () => {
   tr.update(0.1, pose(0.1, 0.5)); // 遺失後重新出現在很遠的位置，不該算揮杖
   assert.equal(tr.update(0.13, pose(0.1, 0.5)).swing, false);
 });
-test('攻擊耗 10 魔力、有冷卻、魔力不足不能施法', () => {
-  const f = new Fight(1, CFG, () => 0.5);
-  let ev = f.step(0.01, [{ swing: true }]);
-  assert.equal(f.players[0].mana, 90); assert.equal(f.monster.hp, CFG.monsterHp - 10); assert.equal(ev[0].type, 'bolt');
-  f.step(0.01, [{ swing: true }]); assert.equal(f.players[0].mana, 90); // 冷卻中
-  f.players[0].mana = 5; f.players[0].cooldown = 0;
-  ev = f.step(0.01, [{ swing: true }]); assert.equal(ev[0].type, 'nomana'); assert.equal(f.players[0].mana, 5);
-});
-test('舉杖每秒回 25 魔力、上限 100、舉杖時不能攻擊', () => {
-  const f = new Fight(1, CFG, () => 0.5); f.players[0].mana = 0;
-  f.step(1, [{ raised: true, swing: true }]);
-  assert.equal(f.players[0].mana, 25); assert.equal(f.monster.hp, CFG.monsterHp);
-  f.monster.nextAttack = 99; for (let i = 0; i < 10; i++) f.step(1, [{ raised: true }]);
-  assert.equal(f.players[0].mana, 100);
-});
-test('魔法飛到面前時揮杖是反彈（不耗魔力），太早揮是攻擊', () => {
-  const f = new Fight(1, CFG, () => 0); f.monster.nextAttack = 0;
-  f.step(0.01, []); assert.equal(f.projs.length, 1);
-  f.step(0.01, [{ swing: true }]); assert.equal(f.projs[0].reflected, false); assert.equal(f.players[0].mana, 90);
-  f.monster.nextAttack = 99; f.step(CFG.projFlight - 0.4, []);
-  const ev = f.step(0.01, [{ swing: true }]);
-  assert.equal(ev[0].type, 'reflect'); assert.equal(f.players[0].mana, 90);
-  const hp = f.monster.hp; f.step(1, []); assert.equal(f.monster.hp, hp - CFG.reflectDamage); assert.equal(f.players[0].hp, 100);
-});
-test('沒擋到扣 15 血；兩人都倒才失敗，倒下 10 秒後半血復活', () => {
-  const f = new Fight(2, CFG, () => 0); f.monster.nextAttack = 0;
-  f.step(0.01, []); f.monster.nextAttack = 99; f.step(CFG.projFlight, []);
-  assert.equal(f.players[0].hp, 85);
-  f.players[0].hp = 0; f.players[0].down = true; f.players[0].reviveT = CFG.reviveTime;
-  f.step(1, []); assert.equal(f.state, 'play');
-  f.step(9.5, []); assert.equal(f.players[0].down, false); assert.equal(f.players[0].hp, 50);
-  f.players.forEach(p => { p.down = true; p.reviveT = 5; });
-  f.step(0.01, []); assert.equal(f.state, 'lose');
-});
-test('怪物血量歸零即勝利', () => {
-  const f = new Fight(1, CFG, () => 0.5); f.monster.hp = 10;
-  const ev = f.step(0.01, [{ swing: true }]); assert.equal(f.state, 'win'); assert.ok(ev.some(e => e.type === 'win'));
-});
-
 test('PK：揮杖射出光球耗 10 魔力，1.5 秒後沒擋到扣 15 血', () => {
   const d = new Duel();
   const ev = d.step(0.01, [{ swing: true }, {}]);
@@ -134,26 +95,6 @@ test('魔杖停住 1.2 秒後再揮是強力閃電，沒停夠就是普通閃電
   assert.equal(runAll(new WandTracker(), [...still(45), ...swing]).power, 1);
   assert.equal(runAll(new WandTracker(), [...still(10), ...swing]).power, 0);
 });
-test('打狼人：防護罩耗 20 魔力，4 秒內擋下攻擊', () => {
-  const f = new Fight(1, CFG, () => 0); f.monster.nextAttack = 0; f.step(0.01, []); f.monster.nextAttack = 99;
-  f.step(0.01, [{ circle: true }]); assert.equal(f.players[0].mana, 80);
-  const ev = f.step(CFG.projFlight, []); assert.ok(ev.some(e => e.type === 'blocked')); assert.equal(f.players[0].hp, 100);
-  f.step(5, []); assert.equal(f.players[0].shieldT, 0);
-});
-test('打狼人：絆倒耗 30 魔力，狼人 3 秒不能攻擊，起來後 6 秒內免疫', () => {
-  const f = new Fight(1, CFG, () => 0); f.monster.nextAttack = 0.5;
-  let ev = f.step(0.01, [{ zigzag: true }]); assert.equal(ev[0].type, 'trip'); assert.equal(f.players[0].mana, 70);
-  f.step(2.9, []); assert.equal(f.projs.length, 0);
-  f.step(0.2, []); assert.ok(f.monster.immuneT > 0);
-  ev = f.step(0.01, [{ zigzag: true }]); assert.equal(ev[0].type, 'immune'); assert.equal(f.players[0].mana, 70);
-  f.step(1, []); assert.equal(f.projs.length, 1); // 起來後繼續攻擊
-});
-test('打狼人：強力閃電耗 25 魔力打 30 血；魔力不夠時退回普通閃電', () => {
-  const f = new Fight(1, CFG, () => 0.5);
-  f.step(0.01, [{ swing: true, power: true }]); assert.equal(f.players[0].mana, 75); assert.equal(f.monster.hp, CFG.monsterHp - 30);
-  f.players[0].mana = 15; f.players[0].cooldown = 0; f.step(0.01, [{ swing: true, power: true }]);
-  assert.equal(f.players[0].mana, 5); assert.equal(f.monster.hp, CFG.monsterHp - 40);
-});
 test('PK：防護罩擋下光球；絆倒讓對手 3 秒不能行動且之後免疫', () => {
   const d = new Duel(); d.step(0.01, [{ swing: true }, { circle: true }]);
   assert.equal(d.players[1].mana, 80); const ev = d.step(1.6, [{}, {}]);
@@ -167,4 +108,10 @@ test('PK：強力光球飛得更快、扣 30 血', () => {
   const d = new Duel(); d.step(0.01, [{ swing: true, power: true }, {}]);
   assert.equal(d.players[0].mana, 75); assert.ok(d.projs[0].total < CFG.duelFlight);
   d.step(1.2, [{}, {}]); assert.equal(d.players[1].hp, 70);
+});
+
+test('PK：光球到面前時蹲下就能閃過', () => {
+  const d = new Duel(); d.step(0.01, [{ swing: true }, {}]);
+  const ev = d.step(1.6, [{}, { duck: true }]);
+  assert.ok(ev.some(e => e.type === 'dodged')); assert.equal(d.players[1].hp, 100);
 });

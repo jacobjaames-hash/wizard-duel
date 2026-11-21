@@ -5,7 +5,8 @@ export const CFG = {
   swingSpeed: 5, swingRefractory: 0.35, raiseOn: 0.5, raiseOff: 0.2, afterRaiseLock: 0.3,
   duelFlight: 1.5, duelDamage: 15, duelSpeedup: 1.15, duelMinFlight: 0.6, roundPause: 3, winsNeeded: 2, fastRegen: 40,
   shieldCost: 20, shieldTime: 4, tripCost: 30, stunTime: 3, tripImmune: 6, powerCost: 25, powerDamage: 30, chargeTime: 1.2,
-  monsterHp: 200, monsterDamage: 15, projFlight: 1.8, monsterInterval: [2.5, 4], reviveTime: 10,
+  reviveTime: 10, firstAttack: 3, aimTol: 1.8, dodgeHit: 0.5, biteZ: 3.4, shieldBreak: 5, volleySpread: 0.75, waveDelay: 2,
+  calibFrames: 15, stepWidth: 1.0, duckOn: 0.8, duckOff: 0.5,
 };
 
 // 追蹤一位玩家的魔杖手。座標單位：已做長寬比修正的影像座標；內部以肩寬為 1 做正規化。
@@ -64,19 +65,141 @@ export class WandTracker {
   }
 }
 
-// 一場對怪物的戰鬥（1–2 人合作）
+// ---------- 敵人與關卡 ----------
+// xr/zr：活動範圍（世界座標，z 越大越靠近玩家）；atk：出手間隔（秒）；flight：魔法飛行時間
+export const ENEMIES = {
+  werewolf:   { name: '狼人', hp: 200, speed: 1.4, xr: [-2.6, 2.6], zr: [-0.6, 1.0], atk: [2.4, 3.8], dmg: 15, flight: 1.8 },
+  spider:     { name: '巨蜘蛛', hp: 220, speed: 2.6, xr: [-3, 3], zr: [-1, 0.6], atk: [2.2, 3.4], dmg: 12, flight: 1.5 },
+  spiderling: { name: '小蜘蛛', hp: 10, speed: 0.8, xr: [-2.6, 2.6], crawl: true, bite: 10 },
+  troll:      { name: '沼澤巨魔', hp: 320, speed: 0.7, xr: [-2.2, 2.2], zr: [-0.8, 0.6], atk: [3.4, 4.8], dmg: 25, flight: 2.4 },
+  ghost:      { name: '幽靈', hp: 200, speed: 1.8, xr: [-3, 3], zr: [-0.8, 1.2], atk: [2.0, 3.0], dmg: 12, flight: 1.6, phase: { show: [3.5, 5.5], hide: 1.6 } },
+  skeleton:   { name: '骷髏', hp: 60, speed: 0.9, xr: [-3, 3], zr: [-4, 1.6], approach: true, atk: [3.0, 4.6], dmg: 10, flight: 1.7 },
+  wizard:     { name: '黑巫師', hp: 300, speed: 2.2, xr: [-2.8, 2.8], zr: [-1, 0.6], atk: [1.8, 2.8], dmg: 15, flight: 1.4, shield: true, volleyEvery: 3 },
+};
+export const LEVELS = [
+  { name: '黑森林', scene: 'forest', boss: 'werewolf' },
+  { name: '蜘蛛洞穴', scene: 'cave', boss: 'spider', minions: { kind: 'spiderling', every: [3.5, 5.5], max: 3 } },
+  { name: '沼澤', scene: 'swamp', boss: 'troll' },
+  { name: '城堡走廊', scene: 'castle', boss: 'ghost' },
+  { name: '墓園', scene: 'graveyard', waves: [['skeleton', 'skeleton', 'skeleton'], ['skeleton', 'skeleton', 'skeleton', 'skeleton']] },
+  { name: '高塔', scene: 'tower', boss: 'wizard' },
+];
+const rnd = (rng, [a, b]) => a + rng() * (b - a);
+
+// 身體位置：開局先記下站的位置，之後算出往左右跨了多少（-1~1）以及有沒有蹲下
+export class BodyTracker {
+  constructor(cfg = CFG) { this.cfg = cfg; this.reset(); }
+  reset() { this.base = null; this.calib = []; this.duck = false; this.dodgeX = 0; }
+  update(pose) {
+    const c = this.cfg;
+    if (!pose || !(pose.sw > 0)) return { dodgeX: this.dodgeX, duck: this.duck };
+    const sw = pose.sw, cx = pose.shoulderC.x, ny = pose.nose.y;
+    if (!this.base) {
+      this.calib.push({ x: cx, y: ny });
+      if (this.calib.length < c.calibFrames) return { dodgeX: 0, duck: false };
+      const med = k => this.calib.map(p => p[k]).sort((a, b) => a - b)[this.calib.length >> 1];
+      this.base = { x: med('x'), y: med('y') };
+    }
+    this.dodgeX = Math.max(-1, Math.min(1, (cx - this.base.x) / (c.stepWidth * sw)));
+    const d = (ny - this.base.y) / sw; // 頭往下掉了幾個肩寬
+    if (!this.duck && d > c.duckOn) this.duck = true;
+    else if (this.duck && d < c.duckOff) this.duck = false;
+    if (!this.duck) this.base.y += (ny - this.base.y) * 0.01; // 站著時慢慢校正，避免慢慢走動造成誤判
+    return { dodgeX: this.dodgeX, duck: this.duck };
+  }
+}
+
+// 故事模式的一關（1–2 人合作）。inputs[i] = {raised, swing, power, zigzag, circle, aim, dodgeX, duck}
 export class Fight {
-  constructor(nPlayers, cfg = CFG, rng = Math.random) {
-    this.cfg = cfg; this.rng = rng; this.state = 'play'; this.nextId = 1;
-    this.players = Array.from({ length: nPlayers }, () => ({ hp: cfg.maxHp, mana: cfg.maxMana, cooldown: 0, down: false, reviveT: 0, raised: false, shieldT: 0 }));
-    this.monster = { hp: cfg.monsterHp, nextAttack: 3, stunT: 0, immuneT: 0 };
-    this.projs = [];
+  constructor(nPlayers, levelIdx = 0, cfg = CFG, rng = Math.random) {
+    this.cfg = cfg; this.rng = rng; this.state = 'play'; this.nextId = 1; this.levelIdx = levelIdx;
+    this.level = LEVELS[levelIdx];
+    this.players = Array.from({ length: nPlayers }, () => ({ hp: cfg.maxHp, mana: cfg.maxMana, cooldown: 0, down: false, reviveT: 0, raised: false, shieldT: 0, dodgeX: 0, duck: false }));
+    this.enemies = []; this.projs = []; this.pending = []; this.waveIdx = 0; this.waveT = 0;
+    this.minionT = this.level.minions ? rnd(rng, this.level.minions.every) : 0;
+    if (this.level.boss) { const b = this.spawn(this.level.boss, 0, 0, this.pending); b.boss = true; }
+    else this.spawnWave(0, this.pending);
+  }
+  get boss() { return this.enemies.find(e => e.boss); }
+  spawn(kind, x, z, ev) {
+    const d = ENEMIES[kind], e = { id: this.nextId++, kind, def: d, x, z, gx: x, gz: z, hp: d.hp, maxHp: d.hp, retargetT: 0,
+      nextAttack: this.cfg.firstAttack + this.rng(), stunT: 0, immuneT: 0, hidden: false, phaseT: d.phase ? rnd(this.rng, d.phase.show) : 0,
+      shieldDownT: 0, attacks: 0, dead: false, target: 0, attackT: 0, hitT: 0 };
+    this.enemies.push(e); ev.push({ type: 'spawn', id: e.id }); return e;
+  }
+  spawnWave(n, ev) {
+    const w = this.level.waves[n];
+    w.forEach((k, j) => { const d = ENEMIES[k], x = d.xr[0] + (d.xr[1] - d.xr[0]) * (j + 0.5) / w.length; this.spawn(k, x, d.zr[0] - this.rng(), ev); });
+    this.waveIdx = n; ev.push({ type: 'wave', n: n + 1, total: this.level.waves.length });
+  }
+  alivePlayers() { return this.players.map((p, i) => i).filter(i => !this.players[i].down); }
+  pickTarget(aim) {
+    const cand = this.enemies.filter(e => !e.dead && !e.hidden);
+    if (!cand.length) return null;
+    if (aim == null) return cand.find(e => e.boss) || cand[0];
+    let best = null; for (const e of cand) if (!best || Math.abs(e.x - aim) < Math.abs(best.x - aim)) best = e;
+    return Math.abs(best.x - aim) <= this.cfg.aimTol ? best : null;
+  }
+  hurt(e, dmg, ev) {
+    if (e.dead) return;
+    e.hp = Math.max(0, e.hp - dmg); e.hitT = 0.4; ev.push({ type: 'enemyHit', id: e.id, dmg });
+    if (e.hp > 0) return;
+    e.dead = true; ev.push({ type: 'enemyDie', id: e.id });
+    if (e.boss) for (const o of this.enemies) if (!o.dead) { o.dead = true; ev.push({ type: 'enemyDie', id: o.id }); } // 頭目倒下，小怪一起逃散
+  }
+  damagePlayer(i, dmg, ev, why) {
+    const p = this.players[i], c = this.cfg; if (p.down) return;
+    if (p.shieldT > 0) { ev.push({ type: 'blocked', player: i }); return; }
+    p.hp = Math.max(0, p.hp - dmg); ev.push({ type: why, player: i });
+    if (p.hp <= 0) { p.down = true; p.reviveT = c.reviveTime; ev.push({ type: 'down', player: i }); }
+  }
+  moveEnemy(e, dt, ev) {
+    const d = e.def, c = this.cfg, r = this.rng;
+    e.attackT = Math.max(0, e.attackT - dt); e.hitT = Math.max(0, e.hitT - dt); e.immuneT = Math.max(0, e.immuneT - dt);
+    if (e.stunT > 0) { e.stunT -= dt; if (e.stunT <= 0) { e.stunT = 0; e.immuneT = c.tripImmune; ev.push({ type: 'recover', id: e.id }); } return; }
+    if (d.shield && e.shieldDownT > 0) { e.shieldDownT -= dt; if (e.shieldDownT <= 0) { e.shieldDownT = 0; ev.push({ type: 'shieldUp', id: e.id }); } }
+    if (d.phase) {
+      e.phaseT -= dt;
+      if (e.phaseT <= 0) {
+        e.hidden = !e.hidden;
+        if (e.hidden) { e.phaseT = d.phase.hide; ev.push({ type: 'vanish', id: e.id }); }
+        else { e.x = e.gx = rnd(r, d.xr); e.z = e.gz = rnd(r, d.zr); e.phaseT = rnd(r, d.phase.show); ev.push({ type: 'appear', id: e.id }); }
+      }
+      if (e.hidden) return;
+    }
+    if (d.crawl) { // 小怪：直直爬向玩家，爬到面前就咬一口
+      e.z += d.speed * dt; e.retargetT -= dt;
+      if (e.retargetT <= 0) { e.gx = rnd(r, d.xr); e.retargetT = 1 + r(); }
+      e.x += Math.sign(e.gx - e.x) * Math.min(Math.abs(e.gx - e.x), 1.2 * dt);
+      if (e.z >= c.biteZ) { e.dead = true; ev.push({ type: 'enemyDie', id: e.id, bite: true }); this.damagePlayer(e.target, d.bite, ev, 'bite'); }
+      return;
+    }
+    e.retargetT -= dt;
+    const dx = e.gx - e.x, dz = e.gz - e.z, dist = Math.hypot(dx, dz);
+    if (dist < 0.1 || e.retargetT <= 0) {
+      e.gx = rnd(r, d.xr);
+      e.gz = d.approach ? Math.min(d.zr[1], e.z + 0.8 + r() * 1.2) : rnd(r, d.zr);
+      e.retargetT = 1.5 + r() * 2;
+    } else { const s = Math.min(dist, d.speed * dt); e.x += dx / dist * s; e.z += dz / dist * s; }
+    if (!d.atk) return;
+    e.nextAttack -= dt;
+    if (e.nextAttack > 0) return;
+    e.nextAttack = rnd(r, d.atk);
+    const alive = this.alivePlayers(); if (!alive.length) return;
+    const target = alive[Math.floor(r() * alive.length) % alive.length], p = this.players[target];
+    e.attacks++; e.attackT = 0.5;
+    const offs = d.volleyEvery && e.attacks % d.volleyEvery === 0 ? [-c.volleySpread, 0, c.volleySpread] : [0];
+    for (const o of offs) { // 魔法飛向玩家「出手當下」站的位置
+      const q = { id: this.nextId++, from: e.id, kind: e.kind, target, aimX: p.dodgeX + o, t: d.flight, total: d.flight, dmg: d.dmg, reflected: false };
+      this.projs.push(q); ev.push({ type: 'throw', id: q.id, from: e.id, target });
+    }
   }
   step(dt, inputs) {
-    const c = this.cfg, ev = [];
+    const c = this.cfg, ev = this.pending; this.pending = [];
     if (this.state !== 'play') return ev;
     this.players.forEach((p, i) => {
       const inp = inputs[i] || {};
+      p.dodgeX = inp.dodgeX || 0; p.duck = !!inp.duck;
       if (p.down) {
         p.raised = false; p.reviveT -= dt;
         if (p.reviveT <= 0) { p.down = false; p.hp = c.maxHp / 2; ev.push({ type: 'revive', player: i }); }
@@ -92,18 +215,22 @@ export class Fight {
         if (p.mana >= c.shieldCost) { p.mana -= c.shieldCost; p.shieldT = c.shieldTime; ev.push({ type: 'shield', player: i }); }
         else ev.push({ type: 'nomana', player: i });
       }
-      if (inp.zigzag && !inc) { // 左右連揮：絆倒
-        const m = this.monster;
-        if (m.stunT > 0 || m.immuneT > 0) ev.push({ type: 'immune', player: i });
-        else if (p.mana >= c.tripCost) { p.mana -= c.tripCost; m.stunT = c.stunTime; ev.push({ type: 'trip', player: i }); }
+      if (inp.zigzag && !inc) { // 左右連揮：絆倒瞄準的敵人
+        const e = this.pickTarget(inp.aim);
+        if (!e) ev.push({ type: 'miss', player: i, x: inp.aim ?? 0 });
+        else if (e.stunT > 0 || e.immuneT > 0) ev.push({ type: 'immune', player: i });
+        else if (p.mana >= c.tripCost) { p.mana -= c.tripCost; e.stunT = c.stunTime; ev.push({ type: 'trip', player: i, id: e.id }); }
         else ev.push({ type: 'nomana', player: i });
       } else if (inp.swing || inp.zigzag) {
-        if (inc) { inc.reflected = true; inc.t = c.reflectReturn; ev.push({ type: 'reflect', player: i, id: inc.id }); }
+        if (inc) { inc.reflected = true; inc.t = c.reflectReturn; inc.by = i; ev.push({ type: 'reflect', player: i, id: inc.id }); }
         else if (p.cooldown <= 0) {
           const power = !!inp.power && p.mana >= c.powerCost;
           if (power || p.mana >= c.attackCost) {
-            p.mana -= power ? c.powerCost : c.attackCost; p.cooldown = c.attackCooldown; this.monster.hp -= power ? c.powerDamage : c.boltDamage;
-            ev.push({ type: 'bolt', player: i, power });
+            p.mana -= power ? c.powerCost : c.attackCost; p.cooldown = c.attackCooldown;
+            const e = this.pickTarget(inp.aim);
+            if (!e) ev.push({ type: 'miss', player: i, x: inp.aim ?? 0, power });
+            else if (e.def.shield && e.shieldDownT <= 0) ev.push({ type: 'shielded', player: i, id: e.id, power });
+            else { ev.push({ type: 'bolt', player: i, id: e.id, power }); this.hurt(e, power ? c.powerDamage : c.boltDamage, ev); }
           } else ev.push({ type: 'nomana', player: i });
         }
       }
@@ -112,31 +239,39 @@ export class Fight {
       q.t -= dt;
       if (q.t > 0) continue;
       q.done = true;
-      if (q.reflected) { this.monster.hp -= c.reflectDamage; ev.push({ type: 'monsterHit', id: q.id }); }
-      else {
-        const p = this.players[q.target];
-        if (!p.down && p.shieldT > 0) ev.push({ type: 'blocked', player: q.target });
-        else if (!p.down) {
-          p.hp = Math.max(0, p.hp - c.monsterDamage); ev.push({ type: 'hit', player: q.target });
-          if (p.hp <= 0) { p.down = true; p.reviveT = c.reviveTime; ev.push({ type: 'down', player: q.target }); }
+      if (q.reflected) {
+        const e = this.enemies.find(o => o.id === q.from);
+        ev.push({ type: 'reflectHit', id: q.id, enemy: q.from });
+        if (e && !e.dead) {
+          if (e.def.shield) { const was = e.shieldDownT > 0; e.shieldDownT = c.shieldBreak; if (!was) ev.push({ type: 'shieldBreak', id: e.id }); }
+          this.hurt(e, c.reflectDamage, ev);
         }
+        continue;
       }
+      const p = this.players[q.target];
+      if (p.down) continue;
+      if (p.shieldT <= 0 && (p.duck || Math.abs(p.dodgeX - q.aimX) >= c.dodgeHit)) { ev.push({ type: 'dodged', player: q.target, id: q.id }); continue; }
+      this.damagePlayer(q.target, q.dmg, ev, 'hit');
     }
     this.projs = this.projs.filter(q => !q.done);
-    const m = this.monster; m.immuneT = Math.max(0, m.immuneT - dt);
-    if (m.stunT > 0) { m.stunT -= dt; if (m.stunT <= 0) { m.stunT = 0; m.immuneT = c.tripImmune; ev.push({ type: 'recover' }); } }
-    else m.nextAttack -= dt;
-    if (m.stunT <= 0 && m.nextAttack <= 0 && m.hp > 0) {
-      const alive = this.players.map((p, i) => i).filter(i => !this.players[i].down);
-      if (alive.length) {
-        const target = alive[Math.floor(this.rng() * alive.length) % alive.length];
-        const q = { id: this.nextId++, target, t: c.projFlight, total: c.projFlight, reflected: false };
-        this.projs.push(q); ev.push({ type: 'throw', id: q.id, target });
+    for (const e of this.enemies) if (!e.dead) this.moveEnemy(e, dt, ev);
+    // 小怪：頭目活著時陸續生出來
+    const mn = this.level.minions, boss = this.boss;
+    if (mn && boss && !boss.dead) {
+      this.minionT -= dt;
+      if (this.minionT <= 0) {
+        this.minionT = rnd(this.rng, mn.every);
+        const alive = this.alivePlayers(), n = this.enemies.filter(e => !e.dead && e.kind === mn.kind).length;
+        if (n < mn.max && alive.length) { const m = this.spawn(mn.kind, boss.x, boss.z + 0.5, ev); m.target = alive[Math.floor(this.rng() * alive.length) % alive.length]; }
       }
-      this.monster.nextAttack = c.monsterInterval[0] + this.rng() * (c.monsterInterval[1] - c.monsterInterval[0]);
     }
-    if (this.monster.hp <= 0) { this.monster.hp = 0; this.state = 'win'; ev.push({ type: 'win' }); }
-    else if (this.players.every(p => p.down)) { this.state = 'lose'; ev.push({ type: 'lose' }); }
+    this.enemies = this.enemies.filter(e => !e.dead || this.projs.some(q => q.from === e.id));
+    // 勝負
+    if (this.level.boss ? boss && boss.dead : !this.enemies.some(e => !e.dead)) {
+      const more = this.level.waves && this.waveIdx + 1 < this.level.waves.length;
+      if (more) { this.waveT += dt; if (this.waveT >= c.waveDelay) { this.waveT = 0; this.spawnWave(this.waveIdx + 1, ev); } }
+      else { this.state = 'win'; ev.push({ type: 'win' }); }
+    } else if (this.players.every(p => p.down)) { this.state = 'lose'; ev.push({ type: 'lose' }); }
     return ev;
   }
 }
@@ -157,6 +292,7 @@ export class Duel {
     if (this.state === 'roundEnd') { this.pause -= dt; if (this.pause <= 0) { this.startRound(); ev.push({ type: 'roundStart' }); } return ev; }
     this.players.forEach((p, i) => {
       const inp = inputs[i] || {}, o = this.players[1 - i];
+      p.duck = !!inp.duck;
       p.cooldown = Math.max(0, p.cooldown - dt); p.shieldT = Math.max(0, p.shieldT - dt); p.immuneT = Math.max(0, p.immuneT - dt);
       if (p.stunT > 0) { p.raised = false; p.stunT -= dt; if (p.stunT <= 0) { p.stunT = 0; p.immuneT = c.tripImmune; } return; } // 被絆倒：不能行動
       p.raised = !!inp.raised;
@@ -192,6 +328,7 @@ export class Duel {
       q.t -= dt; if (q.t > 0) continue;
       q.done = true; const p = this.players[q.target];
       if (p.shieldT > 0) { ev.push({ type: 'blocked', player: q.target }); continue; }
+      if (p.duck) { ev.push({ type: 'dodged', player: q.target, id: q.id }); continue; } // PK：蹲下閃過
       p.hp = Math.max(0, p.hp - (q.power ? c.powerDamage : c.duelDamage)); ev.push({ type: 'hit', player: q.target });
     }
     this.projs = this.projs.filter(q => !q.done);

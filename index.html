@@ -32,15 +32,19 @@
 <video id="cam" playsinline muted autoplay></video>
 <div id="start">
   <h1>巫師對決</h1>
-  <p>試玩版：打狼人、雙人 PK　<span id="ver" style="opacity:.6">v0.3</span></p>
+  <p>故事模式 6 關、雙人 PK　<span id="ver" style="opacity:.6">v0.4</span></p>
   <p>把手機架在電視前，鏡頭對著自己，站在 2–3 公尺外，上半身和舉高的手都要入鏡。<br>
   <b>揮杖</b>＝放閃電　<b>舉過頭</b>＝回復魔力　<b>光圈縮到最小時揮杖</b>＝反彈<br>
-  <b>連續畫圓圈</b>＝防護罩（20 魔力）　<b>快速左右連揮</b>＝絆倒對手（30 魔力）　<b>停住 1 秒再揮</b>＝強力閃電（25 魔力）</p>
+  <b>連續畫圓圈</b>＝防護罩　<b>快速左右連揮</b>＝絆倒　<b>停住 1 秒再揮</b>＝強力閃電<br>
+  <b>往旁邊跨一步或蹲下</b>＝閃躲（PK 要蹲下）</p>
   <div class="row">
-    <button data-n="1">一人打狼人</button>
-    <button data-n="2">兩人打狼人</button>
+    <button data-n="1">一人闖關</button>
+    <button data-n="2">兩人闖關</button>
     <button data-n="2" data-k="pk">兩人 PK</button>
   </div>
+  <div class="row hc"><label>闖關從 <select id="lv">
+    <option value="0">第 1 關　黑森林</option><option value="1">第 2 關　蜘蛛洞穴</option><option value="2">第 3 關　沼澤</option>
+    <option value="3">第 4 關　城堡走廊</option><option value="4">第 5 關　墓園</option><option value="5">第 6 關　高塔</option></select> 開始</label></div>
   <div class="row hc">PK 讓分：
     <label>玩家一 血量 <select id="hp0"><option>100</option><option>150</option><option>200</option></select></label>
     <label>回魔 <select id="rg0"><option value="25">正常</option><option value="40">加快</option></select></label>
@@ -48,7 +52,7 @@
     <label>回魔 <select id="rg1"><option value="25">正常</option><option value="40">加快</option></select></label>
   </div>
   <p id="msg"></p>
-  <p style="font-size:12px;opacity:.6">沒有鏡頭時：滑鼠移動瞄準、點一下揮杖、按住空白鍵回魔；S 防護罩、T 絆倒、P 強力（PK 的玩家二：Enter 揮杖、方向鍵上回魔、K 防護罩、L 絆倒）</p>
+  <p style="font-size:12px;opacity:.6">沒有鏡頭時：滑鼠瞄準、點一下揮杖、空白鍵回魔、Q/E 左右閃、C 蹲下、S 防護罩、T 絆倒、P 強力（玩家二：Enter 揮杖、↑ 回魔、←/→ 閃、↓ 蹲下、K 防護罩、L 絆倒）</p>
   <p style="font-size:11px;opacity:.5">狼人模型：「Werewolf」by TopoForge，以 Sloyd 生成，CC BY 4.0 授權。環境光與霧氣貼圖：pmndrs/assets，CC0</p>
 </div>
 <script type="module" src="js/main.js"></script>
